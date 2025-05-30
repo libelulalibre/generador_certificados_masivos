@@ -13,13 +13,13 @@ from pathlib import Path
 app = FastAPI(title="Generador Masivo de Certificados PDF")
 
 # Configuración de directorios
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parent.parent  # Ahora apunta a la raíz del proyecto
 TEMPLATES_DIR = BASE_DIR / "templates"
-CERTIFICADOS_DIR = BASE_DIR / "certificados_generados"
+OUTPUT_DIR = BASE_DIR / "output"  # Cambiado de CERTIFICADOS_DIR
 
 # Crear directorios si no existen
 TEMPLATES_DIR.mkdir(exist_ok=True)
-CERTIFICADOS_DIR.mkdir(exist_ok=True)
+OUTPUT_DIR.mkdir(exist_ok=True)
 
 @app.post("/subir-archivos")
 async def subir_archivos(
