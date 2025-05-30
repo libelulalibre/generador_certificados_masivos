@@ -1,12 +1,16 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 import pandas as pd
-from PIL import Image, ImageDraw, ImageFont
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.colors import HexColor
+from PyPDF2 import PdfReader, PdfWriter
 import zipfile
 import os
+import io
 from pathlib import Path
 
-app = FastAPI(title="Generador Masivo de Certificados")
+app = FastAPI(title="Generador Masivo de Certificados PDF")
 
 # Configuración de directorios
 BASE_DIR = Path(__file__).parent
@@ -19,16 +23,19 @@ CERTIFICADOS_DIR.mkdir(exist_ok=True)
 
 @app.post("/subir-archivos")
 async def subir_archivos(
-    template: UploadFile = File(..., description="Template (PNG/JPG)"),
+    template: UploadFile = File(..., description="Template (PDF)"),
     datos: UploadFile = File(..., description="Datos en Excel/CSV"),
 ):
-    # Guardar template
+    # Validar formato del template
+    if not template.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="El template debe ser un PDF")
+
+    # Guardar archivos
     template_path = TEMPLATES_DIR / template.filename
+    datos_path = TEMPLATES_DIR / datos.filename
+
     with open(template_path, "wb") as buffer:
         buffer.write(await template.read())
-
-    # Guardar datos
-    datos_path = TEMPLATES_DIR / datos.filename
     with open(datos_path, "wb") as buffer:
         buffer.write(await datos.read())
 
@@ -45,25 +52,21 @@ async def generar_certificados(
     campo_nombre: str = "nombre",
     x: int = 100,
     y: int = 100,
-    color_texto: str = "black",
-    tamano_fuente: int = 30,
+    color_texto: str = "#000000",  # Negro por defecto (formato HEX)
+    tamano_fuente: int = 12,
 ):
     """
-    Genera certificados en masa basados en un template y datos de usuarios.
+    Genera certificados PDF en masa.
     Parámetros:
-    - template_nombre: Nombre del archivo template (debe estar en /templates)
-    - datos_nombre: Nombre del archivo con datos (Excel/CSV)
-    - campo_nombre: Columna que contiene los nombres a insertar
-    - x, y: Posición del texto en píxeles
-    - color_texto: Color del texto (ej: "black", "#FF0000")
-    - tamano_fuente: Tamaño de fuente en puntos
+    - x, y: Posición del texto en puntos (1 punto = 1/72 pulgadas)
+    - color_texto: Código HEX (ej: "#FF0000" para rojo)
     """
-    # Validar formato de imagen
-    if not template_nombre.lower().endswith(('.png', '.jpg', '.jpeg')):
-        raise HTTPException(
-            status_code=400,
-            detail="Formato de imagen no soportado. Use PNG, JPG o JPEG"
-        )
+    # Validar template PDF
+    template_path = TEMPLATES_DIR / template_nombre
+    if not template_path.exists():
+        raise HTTPException(status_code=404, detail="Template no encontrado")
+    if not template_nombre.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="El template debe ser PDF")
 
     # Cargar datos
     datos_path = TEMPLATES_DIR / datos_nombre
@@ -73,47 +76,38 @@ async def generar_certificados(
         else:
             df = pd.read_excel(datos_path, engine='openpyxl')
     except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Error al leer archivo de datos: {str(e)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Error al leer datos: {str(e)}")
 
-    # Verificar existencia del template
-    template_path = TEMPLATES_DIR / template_nombre
-    if not template_path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail="Archivo template no encontrado"
-        )
-
-    # Generar certificados
+    # Procesar cada certificado
     zip_path = CERTIFICADOS_DIR / "certificados.zip"
     try:
         with zipfile.ZipFile(zip_path, 'w') as zipf:
             for _, row in df.iterrows():
-                try:
-                    nombre = str(row[campo_nombre])
-                    with Image.open(template_path) as img:
-                        draw = ImageDraw.Draw(img)
-                        
-                        # Configurar fuente (manejo de fallback)
-                        try:
-                            font = ImageFont.truetype("arial.ttf", tamano_fuente)
-                        except:
-                            font = ImageFont.load_default()
-                        
-                        draw.text((x, y), nombre, fill=color_texto, font=font)
+                nombre = str(row[campo_nombre])
+                output_path = CERTIFICADOS_DIR / f"certificado_{nombre}.pdf"
 
-                        cert_path = CERTIFICADOS_DIR / f"certificado_{nombre}.png"
-                        img.save(cert_path)
-                        zipf.write(cert_path, cert_path.name)
-                        os.remove(cert_path)  # Limpiar archivo temporal
-                
-                except Exception as e:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Error al generar certificado para {nombre}: {str(e)}"
-                    )
+                # 1. Crear PDF temporal con el texto dinámico
+                packet = io.BytesIO()
+                can = canvas.Canvas(packet, pagesize=letter)
+                can.setFont("Helvetica", tamano_fuente)
+                can.setFillColor(HexColor(color_texto))
+                can.drawString(x, y, nombre)  # Posición en puntos
+                can.save()
+
+                # 2. Combinar con el template PDF
+                template_pdf = PdfReader(template_path)
+                texto_pdf = PdfReader(packet)
+                output = PdfWriter()
+
+                page = template_pdf.pages[0]
+                page.merge_page(texto_pdf.pages[0])
+                output.add_page(page)
+
+                with open(output_path, "wb") as f:
+                    output.write(f)
+
+                zipf.write(output_path, output_path.name)
+                os.remove(output_path)  # Limpiar temporal
 
         return FileResponse(
             zip_path,
@@ -122,7 +116,4 @@ async def generar_certificados(
         )
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error al crear archivo ZIP: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")

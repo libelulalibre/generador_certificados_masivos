@@ -1,0 +1,1 @@
+{"detail":[{"type":"missing","loc":["query","template_nombre"],"msg":"Field required","input":null},{"type":"missing","loc":["query","datos_nombre"],"msg":"Field required","input":null}]}
