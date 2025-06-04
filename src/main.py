@@ -9,13 +9,14 @@ import zipfile
 import os
 import io
 from pathlib import Path
+from fastapi import Query
 
 app = FastAPI(title="Generador Masivo de Certificados PDF")
 
 # Configuración de directorios
 BASE_DIR = Path(__file__).parent.parent  # Ahora apunta a la raíz del proyecto
 TEMPLATES_DIR = BASE_DIR / "templates"
-OUTPUT_DIR = BASE_DIR / "output"  # Cambiado de CERTIFICADOS_DIR
+OUTPUT_DIR = BASE_DIR / "output"  
 
 # Crear directorios si no existen
 TEMPLATES_DIR.mkdir(exist_ok=True)
@@ -47,13 +48,13 @@ async def subir_archivos(
 
 @app.post("/generar-certificados")
 async def generar_certificados(
-    template_nombre: str,
-    datos_nombre: str,
-    campo_nombre: str = "nombre",
-    x: int = 100,
-    y: int = 100,
-    color_texto: str = "#000000",  # Negro por defecto (formato HEX)
-    tamano_fuente: int = 12,
+    template_nombre: str = Query(...),
+    datos_nombre: str = Query(...),
+    campo_nombre: str = Query("nombre"),
+    x: int = Query(100),
+    y: int = Query(100),
+    color_texto: str = Query("#000000"),
+    tamano_fuente: int = Query(12),
 ):
     """
     Genera certificados PDF en masa.
@@ -79,19 +80,19 @@ async def generar_certificados(
         raise HTTPException(status_code=400, detail=f"Error al leer datos: {str(e)}")
 
     # Procesar cada certificado
-    zip_path = CERTIFICADOS_DIR / "certificados.zip"
+    zip_path = OUTPUT_DIR / "certificados.zip"
     try:
         with zipfile.ZipFile(zip_path, 'w') as zipf:
             for _, row in df.iterrows():
                 nombre = str(row[campo_nombre])
-                output_path = CERTIFICADOS_DIR / f"certificado_{nombre}.pdf"
+                output_path = OUTPUT_DIR / f"certificado_{nombre}.pdf"
 
                 # 1. Crear PDF temporal con el texto dinámico
                 packet = io.BytesIO()
                 can = canvas.Canvas(packet, pagesize=letter)
-                can.setFont("Helvetica", tamano_fuente)
+                can.setFont("Times-Bold", tamano_fuente)
                 can.setFillColor(HexColor(color_texto))
-                can.drawString(x, y, nombre)  # Posición en puntos
+                can.drawString(x, y, nombre.upper())  # Posición en puntos
                 can.save()
 
                 # 2. Combinar con el template PDF
